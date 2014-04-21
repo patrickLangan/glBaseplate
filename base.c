@@ -8,6 +8,26 @@
 #include<GL/glx.h>
 #include<GL/glu.h>
 
+//Add error checking
+
+void loadCharFile (char *fileName, char **source)
+{
+	FILE *file;
+	unsigned int length;
+
+	file = fopen (fileName, "r");
+
+	fseek (file, 0, SEEK_END);
+	length = ftell (file);
+	fseek (file, 0, SEEK_SET);
+
+	*source = malloc (length + 1);
+
+	fread (*source, 1, length, file);
+
+	fclose (file);
+}
+
 int main(int argc, char **argv)
 {
 	Display *display;
@@ -20,38 +40,32 @@ int main(int argc, char **argv)
 	XWindowAttributes windowAttributes;
 	XEvent xEvent;
 
-	GLXContext glc;
+	GLXContext glContext;
 
-	const GLchar* vertexSource =
-	       "#version 150 core\n \
-		in vec2 position; \
-		void main () \
-		{ \
-			gl_Position = vec4(position, 0.0, 1.0); \
-		}";
-	const GLchar* fragmentSource =
-	       "#version 150 core\n \
-		out vec4 outColor; \
-		void main () \
-		{ \
-			outColor = vec4 (1.0, 1.0, 1.0, 1.0); \
-		}";
+	char *vertexSource;
+	char *fragmentSource;
+	GLuint vertexShader;
+	GLuint fragmentShader;
+
+	FILE *file;
 
 	GLuint vertexArray;
 	GLuint vertexBufferObject;
-	GLfloat vertices[] = {
-		-0.5f,  0.5f,
-		0.5f,  0.5f,
-		0.5f, -0.5f,
-		-0.5f, -0.5f,
-	};
+	int vertexNum;
+	GLfloat *vertices;
 	GLint posAttrib;
 
 	GLuint elementArray;
-	GLuint elements[] = {
-		0, 1, 2,
-		2, 3, 0
-	};
+	int elementNum;
+	GLuint *elements;
+
+	unsigned int i;
+
+
+	//Loading the shader files into char arrays
+	loadCharFile ("shader.vert", &vertexSource);
+	loadCharFile ("shader.frag", &fragmentSource);
+
 
 	//Creating the xWindow
 	display = XOpenDisplay (NULL);
@@ -65,19 +79,22 @@ int main(int argc, char **argv)
 	XStoreName (display, xWindow, "glBaseplate");
 
 	//Making a openGL rendering context
-	glc = glXCreateContext (display, visualInfo, NULL, GL_TRUE);
-	glXMakeCurrent (display, xWindow, glc);
+	glContext = glXCreateContext (display, visualInfo, NULL, GL_TRUE);
+	XFree (visualInfo);
+	glXMakeCurrent (display, xWindow, glContext);
 
 
 	//Compiling the vertex shader
-	GLuint vertexShader = glCreateShader (GL_VERTEX_SHADER);
+	vertexShader = glCreateShader (GL_VERTEX_SHADER);
 	glShaderSource (vertexShader, 1, &vertexSource, NULL);
 	glCompileShader (vertexShader);
+	free (vertexSource);
 
 	//Compiling the fragment shader
-	GLuint fragmentShader = glCreateShader (GL_FRAGMENT_SHADER);
+	fragmentShader = glCreateShader (GL_FRAGMENT_SHADER);
 	glShaderSource (fragmentShader, 1, &fragmentSource, NULL);
 	glCompileShader (fragmentShader);
+	free (fragmentSource);
 
 	//Sticking the vertex and fragment shaders together
 	GLuint shaderProgram = glCreateProgram ();
@@ -88,23 +105,41 @@ int main(int argc, char **argv)
 	glUseProgram (shaderProgram);
 
 
+	//Loading the 3D model into the vertex and face arrays
+	file = fopen ("model.bin", "r");
+
+	fread (&vertexNum, sizeof(int), 1, file);
+	vertices = malloc (vertexNum * 3 * sizeof(float));
+	fread (vertices, sizeof(float), vertexNum * 3, file);
+
+	fread (&elementNum, sizeof(int), 1, file);
+	elements = malloc (elementNum * 3 * sizeof(int));
+	fread (elements, sizeof(int), elementNum * 3, file);
+
+	fclose (file);
+
+
 	//Making the vertex buffer object
 	glGenVertexArrays (1, &vertexArray);
 	glBindVertexArray (vertexArray);
 	glGenBuffers (1, &vertexBufferObject);
 	glBindBuffer (GL_ARRAY_BUFFER, vertexBufferObject);
-	glBufferData (GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+	glBufferData (GL_ARRAY_BUFFER, vertexNum * 3 * sizeof(GLfloat), vertices, GL_STATIC_DRAW);
+	free (vertices);
 
-	//Setting the vertex buffer's data format
 	posAttrib = glGetAttribLocation (shaderProgram, "position");
 	glEnableVertexAttribArray (posAttrib);
-	glVertexAttribPointer (posAttrib, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(GLfloat), 0);
+	glVertexAttribPointer (posAttrib, 3, GL_FLOAT, GL_FALSE, 0, 0);
 
 
 	//Making the element array
 	glGenBuffers (1, &elementArray);
 	glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, elementArray);
-	glBufferData (GL_ELEMENT_ARRAY_BUFFER, sizeof(elements), elements, GL_STATIC_DRAW);
+	glBufferData (GL_ELEMENT_ARRAY_BUFFER, elementNum * 3 * sizeof(GLuint), elements, GL_STATIC_DRAW);
+	free (elements);
+
+
+	glEnable (GL_DEPTH_TEST);
 
 
 	//Rendering loop
@@ -121,17 +156,17 @@ int main(int argc, char **argv)
 			//Setting a color for the following glClear function
 			glClearColor (0.0f, 0.0f, 0.0f, 1.0f);
 			//Filling the selected buffer with the color set by the previsualInfoous function
-			glClear (GL_COLOR_BUFFER_BIT);
+			glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 			//Drawing the triangles
-			glDrawElements (GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+			glDrawElements (GL_TRIANGLES, elementNum * 3, GL_UNSIGNED_INT, 0);
 
 			//Writing the openGL buffer to the xWindow
 			glXSwapBuffers (display, xWindow);
 		} else if (xEvent.type == KeyPress) {
 			//Shutting down
 			glXMakeCurrent (display, None, NULL);
-			glXDestroyContext (display, glc);
+			glXDestroyContext (display, glContext);
 			XDestroyWindow (display, xWindow);
 			XCloseDisplay (display);
 
@@ -144,7 +179,8 @@ int main(int argc, char **argv)
 
 			glDeleteVertexArrays (1, &vertexArray);
 
-			exit (0);
+			return 0;
 		}
 	}
 }
+
